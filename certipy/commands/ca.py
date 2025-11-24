@@ -981,8 +981,13 @@ class CA:
         sd.fromString(b"".join(resp["pctbSD"]["pb"]))
 
         # Find ACE for the user or create a new one
+        has_deny_ace = False
         for i in range(len(sd["Dacl"]["Data"])):
             ace = sd["Dacl"]["Data"][i]
+            if ace["AceType"] == ldaptypes.ACCESS_DENIED_ACE.ACE_TYPE:
+                ace["Ace"]["Mask"]["Mask"] ^= right
+                has_deny_ace = True
+
             if ace["AceType"] != ldaptypes.ACCESS_ALLOWED_ACE.ACE_TYPE:
                 continue
 
@@ -1010,11 +1015,13 @@ class CA:
             else:
                 # Check if user already has the right
                 if ace["Ace"]["Mask"]["Mask"] & right != 0:
-                    logging.info(
-                        f"User {user_obj.get('sAMAccountName')!r} already has {right_type} "
-                        f"rights on {self.ca!r}"
-                    )
-                    return True
+                    if not has_deny_ace:
+                        logging.info(
+                            f"User {user_obj.get('sAMAccountName')!r} already has {right_type} "
+                            f"rights on {self.ca!r}"
+                        )
+                        return True
+                    continue
 
                 # Add the right
                 ace["Ace"]["Mask"]["Mask"] |= right
