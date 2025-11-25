@@ -112,6 +112,11 @@ def add_subparser(subparsers: argparse._SubParsersAction) -> Tuple[str, Callable
         metavar="officer",
         help="Remove an existing officer (Certificate Manager) from the CA",
     )
+    officer_group.add_argument(
+        '-print-acl',
+        action="store_true",
+        help="Print the CA's ACL"
+    )
 
     # CA manager role management
     manager_group = subparser.add_argument_group("manager options")

@@ -13,6 +13,7 @@ It serves as a comprehensive tool for CA administration and security assessment.
 
 import argparse
 import copy
+import struct
 import time
 from typing import Any, List, Optional, Union
 
@@ -43,6 +44,7 @@ from certipy.lib.security import CASecurity
 from certipy.lib.target import Target
 
 from .template import Template
+from ..lib.formatting import pretty_print
 
 # Module name
 NAME = "ca"
@@ -309,6 +311,14 @@ class ICertRequestD2(ICertCustom):
 # =========================================================================
 # Main CA Class
 # =========================================================================
+
+
+def convert_hex_to_sid(hex_string: str) -> str:
+    sid_bytes = bytes.fromhex(hex_string)
+    revision = sid_bytes[0]
+    authority = struct.unpack('>Q', b'\x00\x00' + sid_bytes[2:8])[0]
+    sub_authorities = struct.unpack('<' + 'L' * ((len(sid_bytes) - 8) // 4), sid_bytes[8:])
+    return f"S-{revision}-{authority}-{'-'.join(map(str, sub_authorities))}"
 
 
 class CA:
@@ -1127,6 +1137,60 @@ class CA:
             officer, CertificateAuthorityRights.MANAGE_CERTIFICATES.value, "officer"
         )
 
+    def print_acl(self) -> Union[bool, None]:
+        request = ICertAdminD2GetCASecurity()
+        request["pwszAuthority"] = checkNullString(self.ca)
+
+        try:
+            resp = self.cert_admin2.request(request)
+        except DCERPCSessionError as e:
+            if "E_ACCESSDENIED" in str(e):
+                logging.error(
+                    "Access denied: Insufficient permissions to get CA security"
+                )
+                return False
+            logging.error(f"Failed to get CA security descriptor: {e}")
+            handle_error()
+            return False
+
+        sd = ldaptypes.SR_SECURITY_DESCRIPTOR()
+        sd.fromString(b"".join(resp["pctbSD"]["pb"]))
+
+        result = {}
+        for i in range(len(sd["Dacl"]["Data"])):
+            ace = sd["Dacl"]["Data"][i]
+            ace_type = ace["AceType"]
+            if ace_type == ldaptypes.ACCESS_ALLOWED_ACE.ACE_TYPE:
+                ace_type = "ALLOW"
+            elif ace_type == ldaptypes.ACCESS_DENIED_ACE.ACE_TYPE:
+                ace_type = "DENY"
+
+            mask = ace["Ace"]["Mask"]["Mask"]
+            sid = convert_hex_to_sid(str(ace["Ace"]["Sid"]))
+
+            sid_info = self.connection.lookup_sid(sid)
+            principal = sid_info.get('name')
+
+            rights_list = []
+            if mask & CertificateAuthorityRights.MANAGE_CA.value:
+                rights_list.append('MANAGE_CA')
+            if mask & CertificateAuthorityRights.MANAGE_CERTIFICATES.value:
+                rights_list.append('MANAGE_CERTIFICATES')
+            if mask & CertificateAuthorityRights.AUDITOR.value:
+                rights_list.append('AUDITOR')
+            if mask & CertificateAuthorityRights.OPERATOR.value:
+                rights_list.append('OPERATOR')
+            if mask & CertificateAuthorityRights.READ.value:
+                rights_list.append('READ')
+            if mask & CertificateAuthorityRights.ENROLL.value:
+                rights_list.append('ENROLL')
+
+            result[i] = {'Access': ace_type, 'Rights': rights_list, 'Principal': principal}
+
+        pretty_print(result)
+
+        return True
+
     def remove_officer(self, officer: str) -> Union[bool, None]:
         """
         Remove certificate officer rights from a user.
@@ -1535,5 +1599,7 @@ def entry(options: argparse.Namespace) -> None:
     elif options.disable_template is not None:
         ca.template = options.disable_template
         _ = ca.disable()
+    elif options.print_acl is not None:
+        _ = ca.print_acl()
     else:
         logging.error("No action specified")
