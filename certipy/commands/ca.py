@@ -1155,8 +1155,11 @@ class CA:
 
         sd = ldaptypes.SR_SECURITY_DESCRIPTOR()
         sd.fromString(b"".join(resp["pctbSD"]["pb"]))
+        owner = sd['OwnerSid']
+        owner_sid = convert_hex_to_sid(str(owner))
+        owner_principal = self.connection.lookup_sid(owner_sid).get('name')
 
-        result = {}
+        acl = {}
         for i in range(len(sd["Dacl"]["Data"])):
             ace = sd["Dacl"]["Data"][i]
             ace_type = ace["AceType"]
@@ -1168,8 +1171,7 @@ class CA:
             mask = ace["Ace"]["Mask"]["Mask"]
             sid = convert_hex_to_sid(str(ace["Ace"]["Sid"]))
 
-            sid_info = self.connection.lookup_sid(sid)
-            principal = sid_info.get('name')
+            principal = self.connection.lookup_sid(sid).get('name')
 
             rights_list = []
             if mask & CertificateAuthorityRights.MANAGE_CA.value:
@@ -1185,9 +1187,9 @@ class CA:
             if mask & CertificateAuthorityRights.ENROLL.value:
                 rights_list.append('ENROLL')
 
-            result[i] = {'Access': ace_type, 'Rights': rights_list, 'Principal': principal}
+            acl[i] = {'Access': ace_type, 'Rights': rights_list, 'Principal': principal}
 
-        pretty_print(result)
+        pretty_print({'Owner': owner_principal, 'Permissions': acl})
 
         return True
 
